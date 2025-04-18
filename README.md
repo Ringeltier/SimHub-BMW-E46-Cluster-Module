@@ -8,6 +8,64 @@ All of the testing I performed was on an E46 cluster with the following ID numbe
 
 See the following link for how to retreive this data: https://www.e46fanatics.com/threads/just-found-us-version-of-hidden-menu.239619/
 
+## 🚗 **Now with BMW E39 Cluster Support**
+
+In addition to the BMW E46, this project now supports the **BMW E39 instrument cluster (Low IKE variant)**. The same Arduino Mega shield and core circuitry can be reused with minor adjustments to support E39-specific features, including:
+
+- ✅ **Speedometer** (requires 12V frequency square-wave input)
+- ✅ **RPM Gauge** (via CAN ID `0x316`)
+- ✅ **MPG Gauge Control** (via CAN ID `0x545` with speed signal)
+- ✅ **Gear Indicator (Auto Transmission)** (via CAN ID `0x43F`)
+- ✅ **ASC Status Light** (via CAN ID `0x153`)
+- ✅ **ABS, Parking Brake, and Backlight** (controlled via optocoupler circuitry)
+- ✅ **K-Bus controlled lights/indicators** (uses same level-shifter as E46)
+
+> ⚠️ For **manual IKE clusters**, gear indication may require coding via tools like *BMW Scanner*. Some lights or functions may be inactive until enabled.
+
+All testing used the same K-Bus schematic as for the E46, with confirmed success. A new `E39_Test_Code` sketch is provided for standalone testing and debugging.
+
+## 🧠 **New Insights & Research Highlights**
+
+### ⚙️ MPG Needle Control (E39-specific)
+
+The **MPG needle** is controlled via CAN message `0x545`:
+
+- **Bytes 1–2** form a **16-bit fuel usage counter** that increases over time.
+- This counter must increment **steadily** and be synchronized with a **realistic speed signal** (separate square-wave on `Pin 19`, 50% duty cycle).
+- If the cluster detects implausible data, it will **disable the MPG gauge** until data becomes consistent again.
+- Once synchronized, you can smoothly spoof MPG needle movement with an Arduino + CAN transceiver.
+
+### 🔧 Example CAN Configurations for E39
+
+| Feature        | CAN ID  | Details                                                  |
+|----------------|---------|-----------------------------------------------------------|
+| RPM            | 0x316   | B2-B3 = `(RPM × 6.4)`                                     |
+| Coolant Temp   | 0x329   | B1 = `(.75 × Temp°C) + 48.373`                            |
+| Gear Indicator | 0x43F   | B0 = `0x40` (D), `0x30` (N), `0x10` (P), etc.             |
+| ASC Speed      | 0x153   | B1-B2 = `(Speed × 8)` (KPH)                               |
+| MPG Control    | 0x545   | B1-B2 = fuel counter, B3–B5 = status lights, temp, etc.   |
+| Wheel Speeds   | 0x1F0   | Needed for MPG gauge to work smoothly                    |
+| EGS1 Sync      | 0x1A8   | Send every 100ms to clear gearbox error                  |
+
+### 💡 K-Bus Control Tips
+
+Many lights and features are K-Bus controlled and respond well to the existing E46 K-Bus level shifter:
+
+- Lights: Oil, EML, Check Gas Cap, Cruise, MKL, etc.
+- Sync messages and light test sequence added to firmware
+- Controlled via `CustomSoftwareSerial` and manually composed byte sequences
+
+---
+
+## ✅ Compatibility Summary
+
+| Cluster Model | SimHub Support | CAN Data | K-Bus Control | Manual/Auto Gear | Notes                        |
+|---------------|----------------|----------|----------------|------------------|-----------------------------|
+| BMW E46       | ✅ Fully Supported | ✅       | ✅              | ✅               | Original platform            |
+| BMW E39 (Low) | ✅ New Support   | ✅       | ✅              | ⚠️ Some coding required | MPG + gear control possible  |
+
+---
+
 ## Credits
 
 There is no way I could have accomplished this project without many of the resources available to me:
@@ -55,7 +113,7 @@ BMW CAN Bus Forum: https://www.bimmerforums.com/forum/showthread.php?1887229-E46
 | 22         | ABS Warning Light                	| Inicates that ABS is disabled                                                            | Connecting to ground indicates that ABS is active, and the thus the LED on the cluster will turn off, and vice versa 					      						|
 | 23         | Parking brake switch             	| Indicates that the E-Brake is engaged                                                    | Connecting to ground indicates that the parking brake is not engaged, and will cause the 'BRAKE' light to turn off 					      						|
 | 24         | Brake wear sensor                	| Indicates when the brakes are worn                                                       | Connecting to ground indicates that the brakes are not worn, and the cluster light will turn off, and vice versa 						      						|
-| 25         | Diag Signal TX                   	| Unsure the function of this signal                                                       |       																			      																				|
+| 25         | Diag Signal TX                   	| Used for coding the IKE connect to BMW-Scanner or any other coding module                                                       |       																			      																				|
 | 26         | Coolant Level Sensor             	| Indicates if the coolant level is too low                                                | Connecting this to ground indicates that the coolant level is sufficient, and will turn the cluster light off, and vice versa 				      					|
 
 ### X11176 Connector Pin Function / Signal Levels
@@ -80,6 +138,75 @@ BMW CAN Bus Forum: https://www.bimmerforums.com/forum/showthread.php?1887229-E46
 | 16 	     | Not connected							| N/A											   			|																				      												|
 | 17 	     | Not connected							| N/A											   			|																			      													|
 | 18 	     | Not connected							| N/A											   			|																				      												|
+
+## BMW E39 Instrument Cluster Pinout (Low IKE)
+
+The E39 cluster uses two connectors: `X11175` (black, 26-pin) and `X11176` (white, 26-pin). Below is the complete pinout based on available documentation and real-world testing.
+
+### X11175 Connector (26-pin Black)
+
+| Pin | Dir | Signal Name                        | Description                                                                 |
+|-----|-----|-------------------------------------|-----------------------------------------------------------------------------|
+| 1   | M   | Ground (ECU weight)                | Connect to chassis ground or Arduino GND                                    |
+| 2   | E   | Battery charge indicator (Pin 61)  | Controls battery warning light                                              |
+| 3   | E   | Oil pressure warning light         | Active low – pulling to GND lights the warning                             |
+| 4   | E   | Reverse light signal               | From reverse switch (manual trans)                                          |
+| 5   | E   | Start position (Pin 30h)           | +12V when ignition key is in START position                                 |
+| 6   | –   | Not connected                      |                                                                             |
+| 7   | –   | Not connected                      |                                                                             |
+| 8   | E/A | Diagnostic TX                      | Diag communication (TX)                                                     |
+| 9   | –   | Not connected                      |                                                                             |
+| 10  | –   | Not connected                      |                                                                             |
+| 11  | E   | Brake pad wear indicator           | Active low – pull to GND to clear warning                                   |
+| 12  | E   | Coolant temperature                | Analog input (sensor voltage)                                               |
+| 13  | E   | Sensor ground                      | Analog ground                                                               |
+| 14  | –   | Not connected                      |                                                                             |
+| 15  | –   | Not connected                      |                                                                             |
+| 16  | A   | ABS warning light                  | Active low or CAN controlled                                                |
+| 17  | –   | Not connected                      |                                                                             |
+| 18  | –   | Not connected                      |                                                                             |
+| 19  | E   | Speed signal input                 | 12V square wave (50% duty), required for speedometer and MPG               |
+| 20  | E   | Constant power (Contact 30)        | Always-on +12V                                                              |
+| 21  | E   | Ignition power (Contact 15)        | +12V with ignition on                                                       |
+| 22  | E   | Accessory power (Contact R)        | +12V with key in accessory position                                         |
+| 23  | E   | Backlight signal                   | Controls gauge backlight (12V)                                              |
+| 24  | E   | Injection signal (TI)              | Possibly for diagnostics (rarely needed)                                    |
+| 25  | A   | Sensor ground                      | Analog ref ground                                                           |
+| 26  | –   | Not connected                      |                                                                             |
+
+---
+
+### X11176 Connector (26-pin White)
+
+| Pin | Dir | Signal Name                        | Description                                                                 |
+|-----|-----|-------------------------------------|-----------------------------------------------------------------------------|
+| 1   | E   | OBC remote (BC button)             | Activates functions like trip reset or menu cycling                         |
+| 2   | E   | Fuel tank level sensor I           | Simulate with shunt regulator or digital pot                                |
+| 3   | A   | Sensor ground I                    | Analog return for pin 2                                                     |
+| 4   | –   | Not connected                      |                                                                             |
+| 5   | A   | Gong                               | Beeper signal – active low                                                  |
+| 6   | E   | Fuel tank level sensor II          | Second half of fuel tank                                                    |
+| 7   | A   | Sensor ground II                   | Analog return for pin 6                                                     |
+| 8   | E   | Airbag warning light               | Active low – pull to GND to turn on                                         |
+| 9   | –   | Not connected                      |                                                                             |
+| 10  | –   | Not connected                      |                                                                             |
+| 11  | E/A | CAN High (petrol models)           | CAN H signal line                                                           |
+| 12  | E/A | TXD diagnostic connection          | Diagnostic TX                                                               |
+| 13  | E/A | CAN Low (petrol models)            | CAN L signal line                                                           |
+| 14  | –   | Not connected                      |                                                                             |
+| 15  | –   | Not connected                      |                                                                             |
+| 16  | A   | Gong tone 3 / Acceleration sensor  | Additional tone control                                                     |
+| 17  | –   | Not connected                      |                                                                             |
+| 18  | –   | Not connected                      |                                                                             |
+| 19  | E   | Rear-left wheel speed sensor       | Used by ABS/DSC                                                             |
+| 20  | E/A | K-Bus / I-Bus signal               | Used for lights, indicators, etc.                                           |
+| 21  | –   | Not connected                      |                                                                             |
+| 22  | E   | Parking brake indicator            | Active low – pull to GND to turn off light                                  |
+| 23  | –   | Not connected                      |                                                                             |
+| 24  | E/A | CAN High (redundant)               | Second CAN H (if used)                                                      |
+| 25  | –   | Not connected                      |                                                                             |
+| 26  | E/A | CAN Low (redundant)                | Second CAN L (if used)                                                      |
+
 
 ## Sub-Circuits used in cluster module
 
@@ -171,6 +298,18 @@ In addition, make sure the Arduino Serial monitor is setup as shown below (most 
 ![image](https://user-images.githubusercontent.com/80495580/141869540-ebf4e793-6441-4f00-a5a9-c5b729e238b3.png)
 
 See the section _Valid Command / Argument Combos for both programs_ for a list of commands that you can send to the cluster, along with the effect each one has.
+
+## E39 Test Firmware
+
+The repository now includes an additional sketch named `E39_Cluster_Test`. This is a standalone testing program similar to `E46_Cluster_Test`, enabling you to:
+
+- Manually test each light and gauge
+- Simulate RPM and speed
+- Validate CAN and K-Bus messages
+- Debug physical wiring and power configuration
+
+Like before, commands can be sent via the Arduino Serial Monitor or through SimHub using the **Custom Protocol** feature.
+
 
 ## main-simhub-code
 
